@@ -511,7 +511,26 @@ def get_controller_resources(
     if controller_record is not None:
         handle = controller_record.get('handle', None)
         if handle is not None:
-            controller_resources_to_use = handle.launched_resources
+            launched_resource: resources.Resources = handle.launched_resources
+            if launched_resource is not None:
+                try:
+                    if isinstance(launched_resource.cloud, clouds.Kubernetes):
+                        # we validate the k8s controller resource here first
+                        # TODO: extend controller to check other clouds?
+                        launched_resource.validate()
+                    controller_resources_to_use = launched_resource
+                except Exception as _:  # pylint: disable=broad-except
+                    global_user_state.remove_cluster(
+                        controller.value.cluster_name, True)
+                    logger.warning(
+                        f'{colorama.Fore.YELLOW}Invalid job controller '
+                        'cluster is recorded in SkyPilot state '
+                        f'{controller.value.cluster_name}. Please check '
+                        'for any leaked resources. The controller is '
+                        'recorded to have been launched on '
+                        f'<{launched_resource.cloud.canonical_name()}>.\n'
+                        'Launching a new jobs controller...'
+                        f'{colorama.Style.RESET_ALL}')
 
     # If the controller and replicas are from the same cloud (and region/zone),
     # it should provide better connectivity. We will let the controller choose
