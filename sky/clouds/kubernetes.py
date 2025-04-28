@@ -29,6 +29,7 @@ logger = sky_logging.init_logger(__name__)
 # Check if KUBECONFIG is set, and use it if it is.
 DEFAULT_KUBECONFIG_PATH = '~/.kube/config'
 CREDENTIAL_PATH = os.environ.get('KUBECONFIG', DEFAULT_KUBECONFIG_PATH)
+EXEC_FILTERED_KUBECONFIG_PATH = '~/.sky/exec_filtered_kubeconfig'
 
 # Namespace for SkyPilot resources shared across multiple tenants on the
 # same cluster (even if they might be running in different namespaces).
@@ -105,16 +106,16 @@ class Kubernetes(clouds.Cloud):
         if context is None:
             context = kubernetes_utils.get_current_kube_config_context_name()
         # Features to be disabled for exec auth
-        is_exec_auth, message = kubernetes_utils.is_kubeconfig_exec_auth(
-            context)
-        if is_exec_auth:
-            assert isinstance(message, str), message
-            # Controllers cannot spin up new pods with exec auth.
-            unsupported_features[
-                clouds.CloudImplementationFeatures.HOST_CONTROLLERS] = message
-            # Pod does not have permissions to down itself with exec auth.
-            unsupported_features[
-                clouds.CloudImplementationFeatures.AUTODOWN] = message
+        # is_exec_auth, message = kubernetes_utils.is_kubeconfig_exec_auth(
+        #     context)
+        # if is_exec_auth:
+        #     assert isinstance(message, str), message
+        #     # Controllers cannot spin up new pods with exec auth.
+        #     unsupported_features[
+        #         clouds.CloudImplementationFeatures.HOST_CONTROLLERS] = message
+        #     # Pod does not have permissions to down itself with exec auth.
+        #     unsupported_features[
+        #         clouds.CloudImplementationFeatures.AUTODOWN] = message
         unsupported_features[clouds.CloudImplementationFeatures.STOP] = (
             'Stopping clusters is not supported on Kubernetes.')
         unsupported_features[clouds.CloudImplementationFeatures.AUTOSTOP] = (
@@ -740,8 +741,14 @@ class Kubernetes(clouds.Cloud):
 
     def get_credential_file_mounts(self) -> Dict[str, str]:
         if os.path.exists(os.path.expanduser(CREDENTIAL_PATH)):
+            # Strip auth plugin paths from kubeconfig file before upload.
+            updated = kubernetes_utils.strip_auth_plugin_paths(
+                os.path.expanduser(CREDENTIAL_PATH),
+                os.path.expanduser(EXEC_FILTERED_KUBECONFIG_PATH))
             # Upload kubeconfig to the default path to avoid having to set
             # KUBECONFIG in the environment.
+            if updated:
+                return {DEFAULT_KUBECONFIG_PATH: EXEC_FILTERED_KUBECONFIG_PATH}
             return {DEFAULT_KUBECONFIG_PATH: CREDENTIAL_PATH}
         else:
             return {}
