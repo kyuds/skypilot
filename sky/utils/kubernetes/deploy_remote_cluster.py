@@ -3,11 +3,13 @@
 import argparse
 import base64
 import concurrent.futures as cf
+import errno
 import os
 import random
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -31,6 +33,8 @@ NODE_POOLS_INFO_DIR = os.path.expanduser('~/.sky/ssh_node_pools_info')
 
 # Get the directory of this script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+K3S_PORT = 6443
 
 
 class UniqueKeySafeLoader(yaml.SafeLoader):
@@ -175,6 +179,49 @@ def check_host_in_ssh_config(hostname: str) -> bool:
                          re.MULTILINE)
 
     return bool(pattern.search(proc.stdout))
+
+
+def check_port_open(hostname: str,
+                    port: int = K3S_PORT,
+                    timeout: int = 2) -> None:
+    """Checks whether a specific port is open on the target machine. Note
+    that this is not a fail-proof test as an active firewall might be blocking
+    the port. Nevertheless, this is a preliminary check to ensure that the
+    port is open."""
+
+    def _resolve_ssh_alias(alias):
+        try:
+            result = subprocess.run(['ssh', '-G', alias],
+                                    capture_output=True,
+                                    text=True,
+                                    check=True)
+            for line in result.stdout.splitlines():
+                if line.startswith('hostname '):
+                    return line.split()[1]
+        except subprocess.CalledProcessError:
+            pass
+        return None
+
+    ip = _resolve_ssh_alias(hostname)
+    reason = ''
+    if ip:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            try:
+                sock.connect((ip, port))
+                print(f'{WARNING_YELLOW}A service seems to be listening on'
+                      f'port 6443 on {hostname}. SkyPilot needs access to '
+                      'that port.')
+            except socket.error as e:
+                if e.errno != errno.ECONNREFUSED:
+                    reason = f'Port 6443 not open on {hostname}.'
+                else:
+                    print(f'{YELLOW}Make sure there is no firewall '
+                          f'blocking access to port 6443 on {hostname}')
+    else:
+        reason = f'Couldn\'t resolve hostname {hostname}.'
+    with ux_utils.print_exception_no_traceback():
+        raise ValueError(reason)
 
 
 def get_cluster_config(targets: Dict[str, Any],
@@ -408,6 +455,7 @@ def start_agent_node(node,
                      use_ssh_config=False):
     """Start a k3s agent node.
     Returns: if the start is successful, and if the node has a GPU."""
+    check_port_open(node)
     cmd = f"""
             {askpass_block}
             curl -sfL https://get.k3s.io | K3S_NODE_NAME={node} INSTALL_K3S_EXEC='agent --node-label skypilot-ip={node}' \
@@ -870,6 +918,7 @@ def deploy_cluster(head_node,
                 f'Failed to SSH to head node ({head_node}). '
                 f'Please check the SSH configuration and logs for more details.'
             )
+    check_port_open(head_node)  # (preliminary) check 6443 is open on head node.
 
     # Checking history
     history_exists = (history_worker_nodes is not None and
