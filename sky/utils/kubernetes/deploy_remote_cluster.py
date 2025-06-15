@@ -212,12 +212,14 @@ def check_port_open(hostname: str,
                 print(f'{WARNING_YELLOW}A service seems to be listening on'
                       f'port 6443 on {hostname}. SkyPilot needs access to '
                       'that port.')
+                return
             except socket.error as e:
                 if e.errno != errno.ECONNREFUSED:
                     reason = f'Port 6443 not open on {hostname}.'
                 else:
                     print(f'{YELLOW}Make sure there is no firewall '
                           f'blocking access to port 6443 on {hostname}')
+                    return
     else:
         reason = f'Couldn\'t resolve hostname {hostname}.'
     with ux_utils.print_exception_no_traceback():
